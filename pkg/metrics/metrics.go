@@ -13,20 +13,22 @@ import (
 )
 
 const (
-	NameLabel      = "name"
-	InstalledLabel = "installed"
-	NamespaceLabel = "namespace"
-	ChannelLabel   = "channel"
-	VersionLabel   = "version"
-	PhaseLabel     = "phase"
-	ReasonLabel    = "reason"
-	PackageLabel   = "package"
-	Outcome        = "outcome"
-	Succeeded      = "succeeded"
-	Failed         = "failed"
-	ApprovalLabel  = "approval"
-	WarningLabel   = "warning"
-	GVKLabel       = "gvk"
+	NameLabel             = "name"
+	InstalledLabel        = "installed"
+	NamespaceLabel        = "namespace"
+	ChannelLabel          = "channel"
+	VersionLabel          = "version"
+	PhaseLabel            = "phase"
+	ReasonLabel           = "reason"
+	PackageLabel          = "package"
+	Outcome               = "outcome"
+	Succeeded             = "succeeded"
+	Failed                = "failed"
+	ApprovalLabel         = "approval"
+	WarningLabel          = "warning"
+	GVKLabel              = "gvk"
+	CatalogNameLabel      = "catalogName"
+	CatalogNamespaceLabel = "catalogNamespace"
 )
 
 type MetricsProvider interface {
@@ -164,7 +166,7 @@ var (
 			Name: "subscription_sync_total",
 			Help: "Monotonic count of subscription syncs",
 		},
-		[]string{NameLabel, InstalledLabel, ChannelLabel, PackageLabel, ApprovalLabel},
+		[]string{NameLabel, InstalledLabel, ChannelLabel, PackageLabel, ApprovalLabel, CatalogNameLabel, CatalogNamespaceLabel},
 	)
 
 	csvSucceeded = prometheus.NewGaugeVec(
@@ -210,6 +212,8 @@ type subscriptionSyncLabelValues struct {
 	pkg              string
 	channel          string
 	approvalStrategy string
+	catalogName      string
+	catalogNamespace string
 }
 
 func RegisterOLM() {
@@ -229,8 +233,8 @@ func RegisterCatalog() {
 	prometheus.MustRegister(installPlanWarningCount)
 }
 
-func CounterForSubscription(name, installedCSV, channelName, packageName, planApprovalStrategy string) prometheus.Counter {
-	return SubscriptionSyncCount.WithLabelValues(name, installedCSV, channelName, packageName, planApprovalStrategy)
+func CounterForSubscription(name, installedCSV, channelName, packageName, planApprovalStrategy, catalogName, catalogNamespace string) prometheus.Counter {
+	return SubscriptionSyncCount.WithLabelValues(name, installedCSV, channelName, packageName, planApprovalStrategy, catalogName, catalogNamespace)
 }
 
 func RegisterCatalogSourceState(name, namespace string, state connectivity.State) {
@@ -280,13 +284,15 @@ func EmitSubMetric(sub *operatorsv1alpha1.Subscription) {
 	if sub.Spec == nil {
 		return
 	}
-	SubscriptionSyncCount.WithLabelValues(sub.GetName(), sub.Status.InstalledCSV, sub.Spec.Channel, sub.Spec.Package, string(sub.Spec.InstallPlanApproval)).Inc()
+	SubscriptionSyncCount.WithLabelValues(sub.GetName(), sub.Status.InstalledCSV, sub.Spec.Channel, sub.Spec.Package, string(sub.Spec.InstallPlanApproval), sub.Spec.CatalogSource, sub.Spec.CatalogSourceNamespace).Inc()
 	if _, present := subscriptionSyncCounters[sub.GetName()]; !present {
 		subscriptionSyncCounters[sub.GetName()] = subscriptionSyncLabelValues{
 			installedCSV:     sub.Status.InstalledCSV,
 			pkg:              sub.Spec.Package,
 			channel:          sub.Spec.Channel,
 			approvalStrategy: string(sub.Spec.InstallPlanApproval),
+			catalogName:      sub.Spec.CatalogSource,
+			catalogNamespace: sub.Spec.CatalogSourceNamespace,
 		}
 	}
 }
