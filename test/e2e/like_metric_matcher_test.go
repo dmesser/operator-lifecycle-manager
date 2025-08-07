@@ -75,6 +75,14 @@ func WithApproval(approvalStrategy string) MetricPredicate {
 	return WithLabel("approval", approvalStrategy)
 }
 
+func WithCatalogName(catalogName string) MetricPredicate {
+	return WithLabel("catalogName", catalogName)
+}
+
+func WithCatalogNamespace(catalogNamespace string) MetricPredicate {
+	return WithLabel("catalogName", catalogNamespace)
+}
+
 func WithVersion(version string) MetricPredicate {
 	return WithLabel("version", version)
 }
