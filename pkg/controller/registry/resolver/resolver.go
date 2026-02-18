@@ -29,6 +29,13 @@ type constraintProvider interface {
 	Constraints(e *cache.Entry) ([]solver.Constraint, error)
 }
 
+// ConstraintProviderFunc is a function adapter for the constraintProvider interface.
+type ConstraintProviderFunc func(e *cache.Entry) ([]solver.Constraint, error)
+
+func (c ConstraintProviderFunc) Constraints(e *cache.Entry) ([]solver.Constraint, error) {
+	return c(e)
+}
+
 type Resolver struct {
 	cache                     cache.OperatorCacheProvider
 	log                       logrus.FieldLogger

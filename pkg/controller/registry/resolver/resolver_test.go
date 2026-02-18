@@ -80,13 +80,6 @@ func TestSolveOperators(t *testing.T) {
 	require.ElementsMatch(t, expected, operators)
 }
 
-// ConstraintProviderFunc is a simple implementation of ConstraintProvider
-type ConstraintProviderFunc func(e *cache.Entry) ([]solver.Constraint, error)
-
-func (c ConstraintProviderFunc) Constraints(e *cache.Entry) ([]solver.Constraint, error) {
-	return c(e)
-}
-
 func TestSolveOperators_WithSystemConstraints(t *testing.T) {
 	const namespace = "test-namespace"
 	catalog := cache.SourceKey{Name: "test-catalog", Namespace: namespace}
@@ -188,6 +181,100 @@ func TestSolveOperators_WithSystemConstraints(t *testing.T) {
 			require.NoErrorf(t, err, "Test %s failed", testCase.title)
 		}
 		require.ElementsMatch(t, testCase.expectedOperators, operators, "Test %s failed", testCase.title)
+	}
+}
+
+func TestSolveOperators_WithMinKubeVersion(t *testing.T) {
+	const namespace = "test-namespace"
+	catalog := cache.SourceKey{Name: "test-catalog", Namespace: namespace}
+
+	// Package A: subscription to test-package, requires API provided by B or C
+	packageASub := newSub(namespace, "test-package", "alpha", catalog)
+	APISet := cache.APISet{opregistry.APIKey{Group: "g", Version: "v", Kind: "k", Plural: "ks"}: struct{}{}}
+
+	testPackage := genEntry("test-package.v1", "0.0.1", "", "test-package", "alpha", catalog.Name, catalog.Namespace, APISet, nil, nil, "", false)
+
+	// anotherPackage provides the API, compatible minKubeVersion
+	anotherPackage := genEntry("another-package.v1", "1.0.0", "", "another-package", "alpha", catalog.Name, catalog.Namespace, nil, APISet, nil, "", false)
+	anotherPackage.Properties = append(anotherPackage.Properties, &api.Property{
+		Type:  "olm.csv.metadata",
+		Value: `{"minKubeVersion":"1.24.0"}`,
+	})
+
+	// packageC provides the API, incompatible minKubeVersion
+	packageC := genEntry("packageC.v1", "1.0.0", "", "packageC", "alpha", catalog.Name, catalog.Namespace, nil, APISet, nil, "", false)
+	packageC.Properties = append(packageC.Properties, &api.Property{
+		Type:  "olm.csv.metadata",
+		Value: `{"minKubeVersion":"1.30.0"}`,
+	})
+
+	// packageD: standalone, incompatible minKubeVersion, subscribed
+	packageDSub := newSub(namespace, "packageD", "alpha", catalog)
+	packageDv1 := genEntry("packageD.v1", "1.0.0", "", "packageD", "alpha", catalog.Name, catalog.Namespace, nil, nil, nil, "", false)
+	packageDv2 := genEntry("packageD.v2", "2.0.0", "packageD.v1", "packageD", "alpha", catalog.Name, catalog.Namespace, nil, nil, nil, "", false)
+	packageDv2.Properties = append(packageDv2.Properties, &api.Property{
+		Type:  "olm.csv.metadata",
+		Value: `{"minKubeVersion":"1.30.0"}`,
+	})
+
+	mkProvider, err := NewMinKubeVersionConstraintProvider("1.28.0", logrus.New())
+	require.NoError(t, err)
+
+	testCases := []struct {
+		title             string
+		snapshotEntries   []*cache.Entry
+		subs              []*v1alpha1.Subscription
+		expectedOperators []*cache.Entry
+		err               string
+	}{
+		{
+			title:             "compatible bundle resolves normally",
+			snapshotEntries:   []*cache.Entry{testPackage, anotherPackage},
+			subs:              []*v1alpha1.Subscription{packageASub},
+			expectedOperators: []*cache.Entry{testPackage, anotherPackage},
+		},
+		{
+			title:             "incompatible bundle excluded, compatible alternative selected",
+			snapshotEntries:   []*cache.Entry{testPackage, anotherPackage, packageC},
+			subs:              []*v1alpha1.Subscription{packageASub},
+			expectedOperators: []*cache.Entry{testPackage, anotherPackage},
+		},
+		{
+			title:           "incompatible bundle excluded, no alternative available",
+			snapshotEntries: []*cache.Entry{testPackage, packageC},
+			subs:            []*v1alpha1.Subscription{packageASub},
+			err:             "is incompatible with cluster version",
+		},
+		{
+			title:             "multiple subscriptions, one incompatible - others resolve",
+			snapshotEntries:   []*cache.Entry{testPackage, anotherPackage, packageDv1, packageDv2},
+			subs:              []*v1alpha1.Subscription{packageASub, packageDSub},
+			expectedOperators: []*cache.Entry{testPackage, anotherPackage, packageDv1},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.title, func(t *testing.T) {
+			resolver := Resolver{
+				cache: cache.New(cache.StaticSourceProvider{
+					catalog: &cache.Snapshot{
+						Entries: testCase.snapshotEntries,
+					},
+					cache.NewVirtualSourceKey(namespace): csvSnapshotOrPanic(namespace, testCase.subs),
+				}),
+				log:                       logrus.New(),
+				systemConstraintsProvider: mkProvider,
+			}
+			operators, err := resolver.Resolve([]string{namespace}, testCase.subs)
+
+			if testCase.err != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), testCase.err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.ElementsMatch(t, testCase.expectedOperators, operators)
+		})
 	}
 }
 

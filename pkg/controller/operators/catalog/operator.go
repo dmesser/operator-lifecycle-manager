@@ -223,6 +223,22 @@ func NewOperator(ctx context.Context, kubeconfigPath string, clock utilclock.Clo
 	op.operatorCacheProvider = resolver.NewOperatorCacheProvider(lister, crClient, op.resolverSourceProvider, logger)
 	op.reconciler = reconciler.NewRegistryReconcilerFactory(lister, opClient, configmapRegistryImage, op.now, ssaClient, workloadUserID, opmImage, utilImage)
 	res := resolver.NewOperatorStepResolver(lister, crClient, operatorNamespace, op.operatorCacheProvider, logger)
+
+	// Set up minKubeVersion constraint provider so that bundles requiring a newer
+	// Kubernetes version than the cluster provides are excluded during resolution.
+	serverVersionInfo, err := opClient.KubernetesInterface().Discovery().ServerVersion()
+	if err != nil {
+		logger.Warnf("failed to discover server version, minKubeVersion constraints will not be enforced: %v", err)
+	} else {
+		serverVersionStr := strings.Split(strings.TrimPrefix(serverVersionInfo.String(), "v"), "-")[0]
+		minKubeProvider, err := resolver.NewMinKubeVersionConstraintProvider(serverVersionStr, logger)
+		if err != nil {
+			logger.Warnf("failed to create minKubeVersion constraint provider, minKubeVersion constraints will not be enforced: %v", err)
+		} else {
+			res.SetSystemConstraintsProvider(minKubeProvider)
+		}
+	}
+
 	op.resolver = resolver.NewInstrumentedResolver(res, metrics.RegisterDependencyResolutionSuccess, metrics.RegisterDependencyResolutionFailure)
 
 	// Wire OLM CR sharedIndexInformers

@@ -96,6 +96,12 @@ func NewOperatorStepResolver(lister operatorlister.OperatorLister, client versio
 	return stepResolver
 }
 
+// SetSystemConstraintsProvider sets the constraint provider used to apply
+// system-level constraints (e.g., minKubeVersion) during resolution.
+func (r *OperatorStepResolver) SetSystemConstraintsProvider(cp ConstraintProviderFunc) {
+	r.resolver.systemConstraintsProvider = cp
+}
+
 func (r *OperatorStepResolver) ResolveSteps(namespace string) ([]*v1alpha1.Step, []v1alpha1.BundleLookup, []*v1alpha1.Subscription, error) {
 	subs, err := r.listSubscriptions(namespace)
 	if err != nil {
